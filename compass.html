@@ -4,25 +4,49 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>MARUWORKS | 方位検証</title>
 <style>
-:root{font-family:system-ui,-apple-system,sans-serif;color:#17313b;background:#f4f7f7}body{margin:0;padding:20px}main{max-width:650px;margin:auto}h1{font-size:1.5rem}section{background:white;padding:18px;border-radius:14px;margin:14px 0;box-shadow:0 1px 5px #0001}.reading{text-align:center;font-size:3.4rem;font-weight:750;margin:14px}.muted{color:#5a6d73;font-size:.9rem}button{font-size:1rem;padding:13px 18px;margin:5px 5px 5px 0;border:0;border-radius:10px;background:#126e77;color:white;cursor:pointer}button:disabled{opacity:.4}button.secondary{background:#53666c}select{padding:10px;font-size:1rem}#needle{width:110px;height:110px;margin:12px auto;border:3px solid #abc3c5;border-radius:50%;display:grid;place-items:center;font-size:3rem;transition:transform .12s linear}#log{font-size:.83rem;white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto}#status{font-weight:600}.warning{background:#fff7e5;padding:10px;border-radius:8px}</style>
+:root{font-family:system-ui,-apple-system,sans-serif;color:#17313b;background:#f4f7f7}body{margin:0;padding:20px}main{max-width:650px;margin:auto}h1{font-size:1.5rem}section{background:white;padding:18px;border-radius:14px;margin:14px 0;box-shadow:0 1px 5px #0001}.reading{text-align:center;font-size:3.4rem;font-weight:750;margin:14px}.muted{color:#5a6d73;font-size:.9rem}button{font-size:1rem;padding:13px 18px;margin:5px 5px 5px 0;border:0;border-radius:10px;background:#126e77;color:white;cursor:pointer}button:disabled{opacity:.4}button.secondary{background:#53666c}select{padding:10px;font-size:1rem}#needle{width:110px;height:110px;margin:12px auto;border:3px solid #abc3c5;border-radius:50%;display:grid;place-items:center;font-size:3rem;transition:transform .12s linear}#log{font-size:.83rem;white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto}#diagnostics{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.8}#status{font-weight:600}.warning{background:#fff7e5;padding:10px;border-radius:8px}</style>
 </head><body><main>
-<h1>MARUWORKS｜方位検証</h1>
+<h1>MARUWORKS｜方位検証 <small style="font-size:.55em">診断版 v2</small></h1>
 <p>Pixel 9a / Android Chromeで、<strong>スマートフォンの上端が向いている方角</strong>を調べる実験です。位置情報は取得しません。</p>
 <section><div id="status">停止中</div><p class="muted" id="method">開始ボタンを押してください。</p><button id="start">方位センサーを開始</button><button id="stop" class="secondary" disabled>停止</button><p class="warning" id="caution">画面を上にして端末を水平に持ち、上端を目標方向に向けてください。磁石・金属・電子機器の近くでは数値が乱れる場合があります。</p></section>
 <section><div class="muted">上端が向いている方角（北=0°、東=90°）</div><div class="reading" id="heading">---°</div><div id="direction" style="text-align:center;font-size:1.4rem">未取得</div><div id="needle" aria-hidden="true">↑</div><p class="muted" id="detail">センサー値：未取得</p></section>
 <section><label for="target">目標方位：</label><select id="target"><option value="0">北 0°</option><option value="90">東 90°</option><option value="180">南 180°</option><option value="270">西 270°</option></select><p id="difference">まずセンサーを開始してください。</p><button id="ok" disabled>この方向でOK</button><p class="muted">OKは方向を確認したという自己申告です。計測値が目標と違っていても押せます。</p></section>
 <section><strong>検証ログ（最新30件）</strong><p class="muted">開始・停止・OK時の値を記録します。外部送信しません。</p><div id="log">記録はまだありません。</div><button id="clear" class="secondary">ログを消去</button></section>
 <section><strong>重要：検証上の制約</strong><p class="muted">Android ChromeのブラウザAPIでは、取得できる角度が真北・磁北に対する絶対方位とは限りません。端末の傾きによっても値が変わることがあります。数値が動いても正確な方位が取れたとは限らないため、Pixelのコンパスアプリ等と比較してください。「相対角度のみ」と表示された場合は北基準の方位として扱わないでください。</p></section>
+</main><section><strong>センサー診断（生データ）</strong><p class="muted">2種類のイベントを別々に表示します。相対角度のイベントが来ても絶対角度の表示は消しません。</p><div id="diagnostics" class="muted">未測定</div></section>
 </main><script>
 (()=>{'use strict';
-const $=id=>document.getElementById(id);let active=false,heading=null,source='',lastLog=[],lastRender=0,absoluteSeen=false;
+const $=id=>document.getElementById(id), norm=n=>(n%360+360)%360;
 const labels=['北','北北東','北東','東北東','東','東南東','南東','南南東','南','南南西','南西','西南西','西','西北西','北西','北北西'];
-const norm=n=>(n%360+360)%360;
-const log=s=>{lastLog.unshift(`${new Date().toLocaleTimeString('ja-JP')}  ${s}`);lastLog=lastLog.slice(0,30);$('log').textContent=lastLog.join('\n')};
-const update=()=>{if(heading===null){$('heading').textContent='---°';$('direction').textContent='未取得';$('difference').textContent='方位を取得できていません。';return;}const deg=Math.round(heading);$('heading').textContent=`${String(deg%360).padStart(3,'0')}°`;$('direction').textContent=labels[Math.round(heading/22.5)%16];$('needle').style.transform=`rotate(${heading}deg)`;const target=Number($('target').value),diff=((target-heading+540)%360)-180;$('difference').textContent=`目標まで：${Math.abs(diff).toFixed(1)}° ${Math.abs(diff)<5?'（ほぼ一致）':diff<0?'（左に回す）':'（右に回す）'}`;$('detail').textContent=`取得方式：${source} ／ 最終更新：${new Date().toLocaleTimeString('ja-JP')}`;};
-const onOrientation=e=>{if(!active)return;let value=null,method='';if(typeof e.webkitCompassHeading==='number'&&Number.isFinite(e.webkitCompassHeading)){value=norm(e.webkitCompassHeading);method='webkitCompassHeading';}else if(e.absolute===true&&typeof e.alpha==='number'&&Number.isFinite(e.alpha)){value=norm(360-e.alpha);method='absolute alpha（端末姿勢に依存）';absoluteSeen=true;}else if(typeof e.alpha==='number'&&Number.isFinite(e.alpha)){method='相対角度のみ（北基準ではありません）';$('method').textContent=method;$('status').textContent='相対角度を検出・北基準は未確認';heading=null;source=method;update();return;}else{return;}heading=value;source=method;$('status').textContent='測定中（北基準の正確さは要検証）';$('method').textContent=method;const now=performance.now();if(now-lastRender>100){update();lastRender=now;} };
-async function start(){if(active)return;if(!('DeviceOrientationEvent'in window)){$('status').textContent='このブラウザでは方位センサーAPIを利用できません';log('API非対応');return;}try{if(typeof DeviceOrientationEvent.requestPermission==='function'){const result=await DeviceOrientationEvent.requestPermission();if(result!=='granted')throw Error('センサーの利用が許可されませんでした');}active=true;heading=null;absoluteSeen=false;$('start').disabled=true;$('stop').disabled=false;$('ok').disabled=false;$('status').textContent='センサー応答待ち';window.addEventListener('deviceorientationabsolute',onOrientation,true);window.addEventListener('deviceorientation',onOrientation,true);log('計測開始');setTimeout(()=>{if(active&&heading===null)$('method').textContent='数値が出ない場合はChromeの設定やセンサー権限を確認してください。';},3000);}catch(err){$('status').textContent=`開始できません：${err.message}`;log(`開始失敗：${err.message}`)}}
-function stop(){active=false;window.removeEventListener('deviceorientationabsolute',onOrientation,true);window.removeEventListener('deviceorientation',onOrientation,true);$('start').disabled=false;$('stop').disabled=true;$('ok').disabled=true;$('status').textContent='停止中';log('計測停止')}
-$('start').addEventListener('click',start);$('stop').addEventListener('click',stop);$('target').addEventListener('change',update);$('ok').addEventListener('click',()=>log(`OK｜目標${$('target').value}°｜取得${heading===null?'不可':heading.toFixed(1)+'°'}｜${source||'方式不明'}`));$('clear').addEventListener('click',()=>{lastLog=[];$('log').textContent='記録はまだありません。'});
+let active=false, last=null, logs=[], counts={absolute:0,relative:0}, raw={absolute:null,relative:null}, timer=null;
+function log(s){logs.unshift(`${new Date().toLocaleTimeString('ja-JP')}  ${s}`);logs=logs.slice(0,30);$('log').textContent=logs.join('\n')}
+function formatRaw(r){if(!r)return '受信なし';const f=n=>typeof n==='number'&&Number.isFinite(n)?n.toFixed(1):'null';return `alpha=${f(r.alpha)} / beta=${f(r.beta)} / gamma=${f(r.gamma)} / absolute=${r.absolute} / ${((performance.now()-r.time)/1000).toFixed(1)}秒前`}
+function render(){if(!active)return;
+ const age=last?(performance.now()-last.time)/1000:Infinity;
+ if(last){const deg=Math.round(last.value)%360;$('heading').textContent=String(deg).padStart(3,'0')+'°';$('direction').textContent=labels[Math.round(last.value/22.5)%16];$('needle').style.transform=`rotate(${last.value}deg)`;$('detail').textContent=`取得方式：${last.method} ／ 最終有効値：${age.toFixed(1)}秒前`;
+ const target=Number($('target').value),diff=((target-last.value+540)%360)-180;
+ $('difference').textContent=`目標との差：${Math.abs(diff).toFixed(1)}° ${Math.abs(diff)<5?'（ほぼ一致）':diff<0?'（左方向）':'（右方向）'} ※北基準の精度は未検証`;
+ $('status').textContent=age>3?'測定中・最後の有効値は古くなっています':'測定中・角度取得中（北基準は要検証）';
+ }else{$('heading').textContent='---°';$('direction').textContent='有効な絶対角度は未取得';$('difference').textContent='絶対角度の受信を待っています。';$('status').textContent='測定中・絶対角度の受信待ち';$('detail').textContent='取得方式：未取得';}
+ $('method').textContent=last?last.method:'相対角度だけでは北を特定できません';
+ $('diagnostics').textContent=`絶対イベント：${counts.absolute}件\n${formatRaw(raw.absolute)}\n\n通常イベント：${counts.relative}件\n${formatRaw(raw.relative)}\n\n※数値が表示されても、北基準の正しさは別途検証が必要です。`;
+}
+function handle(e,kind){if(!active)return;counts[kind]++;raw[kind]={alpha:e.alpha,beta:e.beta,gamma:e.gamma,absolute:e.absolute,time:performance.now()};
+ let value=null,method='';
+ if(typeof e.webkitCompassHeading==='number'&&Number.isFinite(e.webkitCompassHeading)){value=norm(e.webkitCompassHeading);method='webkitCompassHeading';}
+ else if(e.absolute===true&&typeof e.alpha==='number'&&Number.isFinite(e.alpha)){value=norm(360-e.alpha);method=`${kind} / absolute alpha（傾き未補正）`;}
+ if(value!==null){last={value,method,time:performance.now()};}
+ render();
+}
+const abs=e=>handle(e,'absolute'),rel=e=>handle(e,'relative');
+async function start(){if(active)return;if(!('DeviceOrientationEvent'in window)){$('status').textContent='センサーAPI非対応';log('API非対応');return;}
+ try{if(typeof DeviceOrientationEvent.requestPermission==='function'){const permission=await DeviceOrientationEvent.requestPermission();if(permission!=='granted')throw Error('センサー利用が許可されませんでした')}
+ active=true;last=null;counts={absolute:0,relative:0};raw={absolute:null,relative:null};$('start').disabled=true;$('stop').disabled=false;$('ok').disabled=false;
+ window.addEventListener('deviceorientationabsolute',abs,true);window.addEventListener('deviceorientation',rel,true);timer=setInterval(render,500);log('計測開始（診断版 v2）');render();
+ }catch(err){$('status').textContent='開始失敗：'+err.message;log('開始失敗：'+err.message)}}
+function stop(){active=false;window.removeEventListener('deviceorientationabsolute',abs,true);window.removeEventListener('deviceorientation',rel,true);clearInterval(timer);$('start').disabled=false;$('stop').disabled=true;$('ok').disabled=true;$('status').textContent='停止中';log('計測停止')}
+$('start').addEventListener('click',start);$('stop').addEventListener('click',stop);$('target').addEventListener('change',render);
+$('ok').addEventListener('click',()=>log(`OK｜目標${$('target').value}°｜${last?'最終取得'+last.value.toFixed(1)+'°・'+((performance.now()-last.time)/1000).toFixed(1)+'秒前':'絶対角度未取得'}｜${last?.method||'不明'}`));
+$('clear').addEventListener('click',()=>{logs=[];$('log').textContent='記録はまだありません。'});
 })();
 </script></body></html>
