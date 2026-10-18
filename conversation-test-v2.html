@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MARUWORKS｜会話とスポット通知 PoC</title>
+<style>
+:root{color-scheme:light}*{box-sizing:border-box}body{font-family:system-ui,-apple-system,'Noto Sans JP',sans-serif;background:#f3f5f2;color:#24362d;max-width:740px;margin:0 auto;padding:18px;line-height:1.65}h1{font-size:1.45rem;margin-bottom:3px}h2{font-size:1.1rem;margin:0 0 12px}.sub{color:#596a60;font-size:.88rem;margin-top:0}section{background:white;border-radius:16px;padding:17px;margin:15px 0;box-shadow:0 3px 15px #0000000b}.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}button{border:0;border-radius:10px;background:#285943;color:white;padding:11px 14px;font:inherit;cursor:pointer}button.secondary{background:#e5eee7;color:#244735}button.warn{background:#775c2f}button:disabled{opacity:.5;cursor:default}input[type=text]{width:100%;border:1px solid #c6d4ca;border-radius:10px;padding:12px;font:inherit;margin:8px 0}#notice{background:#e9f4e8;border:1px solid #a7c7ac;border-radius:13px;padding:14px;display:none}#notice.on{display:block}#notice strong{display:block}.badge{display:inline-block;background:#e9eee9;border-radius:20px;padding:3px 10px;font-size:.83rem}#log{height:290px;overflow:auto;background:#f8faf7;border:1px solid #e0e9e0;border-radius:10px;padding:12px} .msg{padding:9px 12px;border-radius:10px;margin:8px 0;background:#e7efe8}.msg.user{background:#e8edf7}.msg.sys{background:#fff3d7;font-size:.9rem}.msg small{display:block;color:#5a6b60}label{display:flex;gap:8px;align-items:center;margin:9px 0}.help{font-size:.87rem;color:#64746a}.scenario{border-top:1px solid #edf0ed;padding-top:12px;margin-top:12px}
+</style></head><body>
+<h1>MARUWORKS｜会話 × 歴史スポット</h1><p class="sub">PoC v2：スポット通知を優先しつつ、会話を自然につなぐ動作検証</p>
+<section><h2>① スポット到着を再現</h2><p class="help">実際に歩く必要はありません。ボタンでGPSの到着イベントを模擬します。</p><div class="row"><button id="arrive">📍 スポットに到着</button><button class="secondary" id="leaving">🚶 通り過ぎそう</button><button class="secondary" id="reset">最初からやり直す</button></div><p><span class="badge" id="status">スポット未到着</span> <span class="badge" id="conversationStatus">会話待機中</span></p><div id="notice" role="status" aria-live="polite"><strong>📍 この場所には、ちょっと面白い歴史があります</strong><span id="noticeText">名古屋城周辺の歴史スポットを見つけました。</span><div class="row" style="margin-top:10px"><button id="show">今、聞く</button><button class="secondary" id="later">あとで聞く</button></div></div></section>
+<section><h2>② 会話してみる</h2><p class="help">会話の途中で①の「スポットに到着」を押してみてください。通知はすぐ出ます。短い通知音も鳴ります（端末の音量・ブラウザーの制限によっては鳴らない場合があります）。</p><div id="log" aria-live="polite"></div><input type="text" id="utterance" placeholder="例：江戸時代の名古屋について教えて" aria-label="話しかける内容"><div class="row"><button id="send">入力した内容を送信</button><button class="secondary" id="mic">🎤 音声入力</button><button class="secondary" id="stop">⏹ 読み上げを止める</button><button class="secondary" id="pause">会話の区切りを再現</button></div><label><input type="checkbox" id="speech" checked>AI役の返答を音声で読み上げる</label><p class="help">「入力した内容を送信」は、文字でAI役に話しかけるボタンです。音声入力は対応ブラウザーのみ。会話の区切りはまだ自動判定できないため、専用ボタンでも再現できます。</p></section>
+<section><h2>③ 試してほしい3つの場面</h2><div class="scenario"><strong>A：会話中に到着</strong><br>何か発言 → 「スポットに到着」 → 通知が出る。会話は自動中断されない。</div><div class="scenario"><strong>B：自分から質問</strong><br>到着後に「ここには何があった？」と発言 → その場所の案内を開始。</div><div class="scenario"><strong>C：話題の区切りで提案</strong><br>到着後に「会話の区切りを再現」 → AI役がスポットの話題を提案。「通り過ぎそう」の後は、次のユーザー発言への返答でスポットを優先して提案する。</div></section>
+<section><h2>この検証で分かること／まだ分からないこと</h2><p class="help">これは<strong>会話制御の試作品</strong>です。到着はボタンで模擬し、返答は定型ルールです。実際のGPS判定、生成AIによる自由会話、音声の自動ターン判定はまだ接続していません。次段階でAI接続する際も、APIキーを公開GitHub Pagesに書き込まない構成にします。</p></section>
+<script>
+(()=>{
+const $=id=>document.getElementById(id);
+let spot='none', proposed=false, departing=false, speaking=false, pendingPrompt=false, lastGuide='';
+const spotName='名古屋城周辺の歴史スポット';
+let audioCtx=null;
+function log(kind,msg){
+ const el=document.createElement('div');el.className='msg '+kind;
+ const who=document.createElement('small');who.textContent=kind==='user'?'あなた':kind==='sys'?'システム':'AIガイド（仮）';
+ el.append(who,document.createTextNode(msg));$('log').append(el);$('log').scrollTop=$('log').scrollHeight;
+}
+function stopSpeech(){
+ if('speechSynthesis'in window)speechSynthesis.cancel();
+ speaking=false;setStatus();
+}
+function talk(msg){
+ lastGuide=msg;stopSpeech();log('ai',msg);
+ if($('speech').checked&&'speechSynthesis'in window){
+  const u=new SpeechSynthesisUtterance(msg);u.lang='ja-JP';u.rate=1.03;
+  speaking=true;setStatus();
+  u.onend=u.onerror=()=>{speaking=false;setStatus()};
+  speechSynthesis.speak(u);
+ }
+}
+function ding(){
+ try{
+  const AC=window.AudioContext||window.webkitAudioContext;
+  if(!AC)return;
+  if(!audioCtx)audioCtx=new AC();
+  if(audioCtx.state==='suspended')audioCtx.resume();
+  const now=audioCtx.currentTime;
+  [660,880].forEach((freq,i)=>{
+   const osc=audioCtx.createOscillator(),gain=audioCtx.createGain();
+   osc.type='sine';osc.frequency.value=freq;
+   const at=now+i*.15;
+   gain.gain.setValueAtTime(.0001,at);gain.gain.exponentialRampToValueAtTime(.075,at+.015);
+   gain.gain.exponentialRampToValueAtTime(.0001,at+.14);
+   osc.connect(gain);gain.connect(audioCtx.destination);osc.start(at);osc.stop(at+.15);
+  });
+ }catch(e){log('sys','通知音は再生できませんでした（通知表示は正常です）。')}
+}
+function setStatus(){
+ const labels={none:'スポット未到着',pending:'スポット通知中',later:'通知を保留中',introduced:'スポット紹介済み'};
+ $('status').textContent=labels[spot];
+ $('notice').classList.toggle('on',spot==='pending');
+ $('conversationStatus').textContent=speaking?'音声読み上げ中':'会話待機中';
+}
+function arrive(){
+ spot='pending';departing=false;proposed=false;pendingPrompt=false;
+ setStatus();ding();
+ log('sys','スポット到着：通知を表示し、通知音を再生しました。会話は中断しません。');
+}
+function explain(repeat=false){
+ spot='introduced';proposed=true;pendingPrompt=false;departing=false;setStatus();
+ talk((repeat?'もちろんです。もう一度ご案内します。':'')+
+ '今いる場所は名古屋城の周辺です。江戸時代には、名古屋城を中心に城下町が発展しました。周囲の景色と重ねて考えると面白いですね。これは動作確認用の仮の説明です。');
+}
+function offer(urgent=false){
+ if(spot!=='pending'||proposed)return false;
+ proposed=true;pendingPrompt=true;
+ talk(urgent?'この場所を通り過ぎる前に、ひとつだけ。ここには歴史の話があります。少し聞いてみますか？':'ところで、今ちょうど歴史のある場所にいます。少しお話ししてもいいですか？');
+ return true;
+}
+function respond(t){
+ log('user',t);$('utterance').value='';
+ const repeat=/(もう一度|もういちど|もう1回|もう一回|再度|繰り返|さっきの説明|同じ説明|聞かせて)/.test(t);
+ const place=/(ここ|この場所|この辺|近く|スポット|何があった|歴史|このあたり)/.test(t);
+ const yes=/(いいよ|いいです|お願い|聞きたい|教えて|はい|うん|どうぞ)/.test(t);
+ const no=/(やめ|あとで|今はいい|興味ない|いらない|結構です)/.test(t);
+ if(no&&(spot==='pending'||pendingPrompt)){
+  spot='later';pendingPrompt=false;setStatus();talk('わかりました。案内は保留にします。');return;
+ }
+ if(spot==='introduced'&&(repeat||place)){
+  explain(true);return;
+ }
+ if(spot!=='none'&&(place||(pendingPrompt&&yes))){
+  explain();return;
+ }
+ if(spot==='pending'&&departing&&!proposed){
+  offer(true);return;
+ }
+ // 通常の発言への返答は定型文。AIによる自由会話はまだ実装していません。
+ talk('なるほど。その話をもう少し聞かせてください。');
+}
+function pause(){
+ log('sys','会話の区切りを手動で再現しました。');
+ if(offer(departing))return;
+ if(spot==='later')log('sys','保留中のため自動で再提案しません。');
+ else if(spot==='pending'&&proposed)log('sys','提案済みなので返事を待っています。');
+ else log('sys','新しいスポット提案はありません。');
+}
+$('arrive').onclick=arrive;
+$('leaving').onclick=()=>{
+ if(spot!=='pending'){log('sys','先に「スポットに到着」を押してください。');return}
+ departing=true;log('sys','通過しそうな状態：次のユーザー発言への返答、または会話の区切りで案内を優先します。');
+};
+$('show').onclick=()=>explain(spot==='introduced');
+$('later').onclick=()=>{spot='later';pendingPrompt=false;setStatus();log('sys','案内を保留しました。再度「スポットに到着」で通知を表示できます。')};
+$('pause').onclick=pause;
+$('stop').onclick=()=>{stopSpeech();log('sys','読み上げを停止しました。')};
+$('send').onclick=()=>{const t=$('utterance').value.trim();if(t)respond(t)};
+$('utterance').addEventListener('keydown',e=>{if(e.key==='Enter')$('send').click()});
+$('reset').onclick=()=>{
+ stopSpeech();spot='none';proposed=false;departing=false;pendingPrompt=false;lastGuide='';
+ $('log').replaceChildren();setStatus();log('sys','初期化しました。文字入力または音声入力で話しかけてください。');
+};
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+if(!SR){$('mic').disabled=true;$('mic').textContent='音声入力非対応'}
+else $('mic').onclick=()=>{
+ const r=new SR();r.lang='ja-JP';r.interimResults=false;r.maxAlternatives=1;
+ $('mic').disabled=true;$('mic').textContent='聞き取り中…';
+ r.onresult=e=>{const t=e.results[0][0].transcript;$('utterance').value=t;respond(t)};
+ r.onerror=e=>log('sys','音声入力エラー：'+e.error);
+ r.onend=()=>{$('mic').disabled=false;$('mic').textContent='🎤 音声入力'};
+ try{r.start()}catch(e){r.onend();log('sys','音声入力を開始できませんでした')}
+};
+$('reset').click();
+})();
+</script></body></html>
